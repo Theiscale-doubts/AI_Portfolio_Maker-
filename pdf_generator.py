@@ -2,9 +2,6 @@ from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 import os, base64, re, tempfile, shutil, copy
 
-os.environ.setdefault('FONTCONFIG_FILE', '')
-os.environ.setdefault('FONTCONFIG_PATH', '')
-
 
 def process_images(obj, tmp_dir, counter):
     """Recursively find base64 image strings, save as real files, return file:// path."""
@@ -29,7 +26,6 @@ def process_images(obj, tmp_dir, counter):
 
 
 def merge_images_into_ai_projects(portfolio_data: dict) -> dict:
-    """Copy images + DS fields from original projects into ai_content projects."""
     data = copy.deepcopy(portfolio_data)
     ai = data.get("ai_content", {})
     orig_projects = data.get("projects", [])
@@ -56,29 +52,29 @@ def merge_images_into_ai_projects(portfolio_data: dict) -> dict:
 
 
 def inject_orientation(html: str, orientation: str) -> str:
-    """Inject CSS to override @page size for landscape/portrait."""
-    # For portrait, use explicit dimensions and override everything
+    """Inject CSS to override @page size AND add safe fonts (Render fix)."""
+
+    # ✅ SAFE FONT FIX (IMPORTANT)
+    font_fix = """
+<style>
+  * {
+    font-family: Arial, Helvetica, sans-serif !important;
+  }
+</style>
+"""
+
     if orientation == 'landscape':
         override = """
 <style>
   @page { size: 297mm 210mm !important; margin: 0 !important; }
-  @page cover-p { size: 297mm 210mm !important; margin: 0 !important; }
-  @page inner-p { size: 297mm 210mm !important; }
-  @page cover-page { size: 297mm 210mm !important; }
-  @page inner-page { size: 297mm 210mm !important; }
 </style>"""
     else:
-        # Portrait: 210mm × 297mm (explicit to override any landscape defaults)
         override = """
 <style>
   @page { size: 210mm 297mm !important; margin: 0 !important; }
-  @page cover-p { size: 210mm 297mm !important; margin: 0 !important; }
-  @page inner-p { size: 210mm 297mm !important; }
-  @page cover-page { size: 210mm 297mm !important; }
-  @page inner-page { size: 210mm 297mm !important; }
 </style>"""
-    # Inject right before </head>
-    return html.replace('</head>', override + '\n</head>', 1)
+
+    return html.replace('</head>', font_fix + override + '\n</head>', 1)
 
 
 def generate_pdf(portfolio_data: dict, template_id: int, orientation: str = 'portrait') -> bytes:
@@ -86,10 +82,8 @@ def generate_pdf(portfolio_data: dict, template_id: int, orientation: str = 'por
     env = Environment(loader=FileSystemLoader(template_dir))
     template = env.get_template(f"template_{template_id}.html")
 
-    # Merge images from original into ai_content projects
     merged_data = merge_images_into_ai_projects(portfolio_data)
 
-    # Build context — keep ai_content separate, promote only safe top-level keys
     context = copy.deepcopy(merged_data)
     ai = merged_data.get("ai_content", {})
     for key in ["summary", "tagline", "enhanced_bio", "skills_highlight"]:
@@ -104,7 +98,7 @@ def generate_pdf(portfolio_data: dict, template_id: int, orientation: str = 'por
 
         html_content = template.render(**context)
 
-        # Inject orientation CSS override
+        # ✅ Inject orientation + font fix
         html_content = inject_orientation(html_content, orientation)
 
         img_count = html_content.count('<img ')

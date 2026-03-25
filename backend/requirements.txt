@@ -4,3 +4,4 @@ groq
 python-dotenv
 jinja2
 weasyprint
+gunicorn

@@ -202,6 +202,9 @@ def parse_ai_json(raw: str) -> dict:
 def health():
     return {"status": "ok"}
 
+@app.get("/")
+def home():
+    return {"message": "API is running"}
 
 @app.post("/api/generate")
 async def generate_portfolio(data: PortfolioRequest):

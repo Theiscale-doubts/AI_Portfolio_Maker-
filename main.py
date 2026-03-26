@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
@@ -9,6 +9,7 @@ import re
 import json
 import logging
 import traceback
+import sys
 
 from groq import Groq
 from dotenv import load_dotenv
@@ -19,21 +20,54 @@ load_dotenv()
 # ── Logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    stream=sys.stdout,
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+# ── Environment validation ────────────────────────────────────────────────────
+def validate_environment():
+    """Validate required environment variables and dependencies on startup."""
+    missing = []
+    
+    if not os.getenv("GROQ_API_KEY"):
+        missing.append("GROQ_API_KEY")
+    
+    if missing:
+        error_msg = f"Missing required environment variables: {', '.join(missing)}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+    
+    logger.info("✓ Environment validation passed")
 
+
+# ── FastAPI app setup ─────────────────────────────────────────────────────────
+app = FastAPI(title="Portfolio Generator API", version="1.0.0")
+
+# Validate environment before creating routes
+try:
+    validate_environment()
+except RuntimeError as e:
+    logger.error(f"Startup failed: {e}")
+    sys.exit(1)
+
+# CORS configuration - more restrictive in production
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# Initialize Groq client
+try:
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    logger.info("✓ Groq client initialized")
+except Exception as e:
+    logger.error(f"Failed to initialize Groq client: {e}")
+    sys.exit(1)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -200,15 +234,20 @@ def parse_ai_json(raw: str) -> dict:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    """Health check endpoint for monitoring and load balancers."""
+    return {
+        "status": "ok",
+        "service": "portfolio-generator-api",
+        "version": "1.0.0"
+    }
 
-@app.get("/")
-def home():
-    return {"message": "API is running"}
 
 @app.post("/api/generate")
 async def generate_portfolio(data: PortfolioRequest):
+    """Generate AI-enhanced portfolio content from user input."""
     try:
+        logger.info(f"Generating portfolio for: {data.full_name}")
+        
         safe_projects = strip_images([p.dict() for p in data.projects])
         safe_work = strip_images([w.dict() for w in (data.work_experience or [])])
         safe_certs = [
@@ -233,7 +272,7 @@ Projects: {json.dumps(safe_projects, indent=1)}
 Work: {json.dumps(safe_work, indent=1)}
 Certs: {json.dumps(safe_certs, indent=1)}"""
 
-        logger.info("Calling Groq API for user: %s", data.full_name)
+        logger.debug(f"Prompt length: {len(prompt)} characters")
 
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
@@ -243,36 +282,47 @@ Certs: {json.dumps(safe_certs, indent=1)}"""
         )
 
         raw_content = response.choices[0].message.content
-        logger.info("Groq response received (%d chars)", len(raw_content))
-        logger.debug("Raw AI response: %s", raw_content[:500])
+        logger.info(f"Groq response received ({len(raw_content)} chars)")
 
         ai_content = parse_ai_json(raw_content)
 
         full_portfolio = data.dict()
         full_portfolio["ai_content"] = ai_content
 
+        logger.info(f"Portfolio generation successful for: {data.full_name}")
         return {"success": True, "portfolio": full_portfolio}
 
     except json.JSONDecodeError as e:
-        logger.error("JSON parse error: %s", e)
+        logger.error(f"JSON parse error: {e}")
         raise HTTPException(status_code=500, detail=f"AI returned invalid JSON: {str(e)}")
     except Exception as e:
-        logger.error("Unexpected error in /api/generate:\n%s", traceback.format_exc())
+        logger.error(f"Unexpected error in /api/generate:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/download-pdf")
 async def download_pdf(req: PDFRequest):
+    """Generate and download portfolio PDF."""
     try:
-        logger.info("Generating PDF — template %d, orientation: %s", req.template_id, req.orientation)
+        logger.info(f"Generating PDF — template {req.template_id}, orientation: {req.orientation}")
+        
+        if not (1 <= req.template_id <= 5):
+            logger.warning(f"Invalid template ID: {req.template_id}")
+            raise HTTPException(status_code=400, detail=f"Invalid template_id: {req.template_id}")
+        
         pdf_bytes = generate_pdf(req.portfolio_data, req.template_id, req.orientation)
+        
+        logger.info(f"PDF generated successfully: {len(pdf_bytes)} bytes")
         return StreamingResponse(
             iter([pdf_bytes]),
             media_type="application/pdf",
             headers={"Content-Disposition": "attachment; filename=portfolio.pdf"},
         )
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error("PDF generation error:\n%s", traceback.format_exc())
+        logger.error(f"PDF generation error:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -281,15 +331,67 @@ async def download_pdf(req: PDFRequest):
 FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 
 if os.path.exists(FRONTEND_DIST):
+    logger.info(f"Frontend dist found at: {FRONTEND_DIST}")
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
 
     @app.get("/")
     async def serve_root():
+        """Serve the React frontend index.html."""
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
+        """Serve static files and fallback to index.html for SPA routing."""
         file_path = os.path.join(FRONTEND_DIST, full_path)
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
+else:
+    logger.warning(f"Frontend dist not found at: {FRONTEND_DIST}")
+    logger.warning("Frontend will not be served. Use API endpoints directly or build frontend.")
+    
+    @app.get("/")
+    async def serve_message():
+        """Frontend not available message."""
+        return JSONResponse({
+            "message": "Portfolio Generator API",
+            "version": "1.0.0",
+            "status": "running",
+            "note": "Frontend not built. Use API endpoints: /api/health, /api/generate, /api/download-pdf"
+        })
+
+
+# ── Startup and shutdown events ───────────────────────────────────────────────
+
+@app.on_event("startup")
+async def startup_event():
+    """Log startup information."""
+    logger.info("=" * 60)
+    logger.info("Portfolio Generator API starting...")
+    logger.info(f"Frontend available: {os.path.exists(FRONTEND_DIST)}")
+    logger.info("=" * 60)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Log shutdown information."""
+    logger.info("Portfolio Generator API shutting down...")
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import uvicorn
+    
+    # Get port from environment variable, default to 8000
+    port = int(os.getenv("PORT", "8000"))
+    host = os.getenv("HOST", "0.0.0.0")
+    
+    logger.info(f"Starting server on {host}:{port}")
+    
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+    )

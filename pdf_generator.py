@@ -1,7 +1,11 @@
 from jinja2 import Environment, FileSystemLoader
 from playwright.async_api import async_playwright
 import asyncio
+import nest_asyncio
 import os, base64, re, tempfile, shutil, copy
+
+
+nest_asyncio.apply()
 
 
 def process_images(obj, tmp_dir, counter):
@@ -60,7 +64,7 @@ def inject_orientation(html: str, orientation: str) -> str:
     return html.replace('</head>', override + '\n</head>', 1)
 
 
-# ✅ ASYNC PLAYWRIGHT ENGINE (FIXED)
+# ✅ ASYNC PLAYWRIGHT ENGINE
 async def html_to_pdf_async(html_content: str) -> bytes:
     async with async_playwright() as p:
         browser = await p.chromium.launch()
@@ -77,9 +81,10 @@ async def html_to_pdf_async(html_content: str) -> bytes:
         return pdf_bytes
 
 
-# ✅ WRAPPER (keeps your existing flow unchanged)
+# ✅ FIXED WRAPPER (NO asyncio.run ❌)
 def html_to_pdf(html_content: str) -> bytes:
-    return asyncio.run(html_to_pdf_async(html_content))
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(html_to_pdf_async(html_content))
 
 
 def generate_pdf(portfolio_data: dict, template_id: int, orientation: str = 'portrait') -> bytes:
@@ -103,7 +108,7 @@ def generate_pdf(portfolio_data: dict, template_id: int, orientation: str = 'por
         html_content = template.render(**context)
         html_content = inject_orientation(html_content, orientation)
 
-        # ✅ PDF generation (unchanged call)
+        # ✅ PDF generation (same flow)
         pdf_bytes = html_to_pdf(html_content)
 
     finally:

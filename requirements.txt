@@ -6,3 +6,4 @@ jinja2
 playwright
 gunicorn
 reportlab
+nest_asyncio

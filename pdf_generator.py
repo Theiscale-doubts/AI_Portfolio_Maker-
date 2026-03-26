@@ -1,5 +1,6 @@
 from jinja2 import Environment, FileSystemLoader
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
+import asyncio
 import os, base64, re, tempfile, shutil, copy
 
 
@@ -59,21 +60,26 @@ def inject_orientation(html: str, orientation: str) -> str:
     return html.replace('</head>', override + '\n</head>', 1)
 
 
-# ✅ NEW PDF ENGINE (Playwright)
-def html_to_pdf(html_content: str) -> bytes:
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
+# ✅ ASYNC PLAYWRIGHT ENGINE (FIXED)
+async def html_to_pdf_async(html_content: str) -> bytes:
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
 
-        page.set_content(html_content, wait_until="networkidle")
+        await page.set_content(html_content, wait_until="networkidle")
 
-        pdf_bytes = page.pdf(
+        pdf_bytes = await page.pdf(
             format="A4",
             print_background=True
         )
 
-        browser.close()
+        await browser.close()
         return pdf_bytes
+
+
+# ✅ WRAPPER (keeps your existing flow unchanged)
+def html_to_pdf(html_content: str) -> bytes:
+    return asyncio.run(html_to_pdf_async(html_content))
 
 
 def generate_pdf(portfolio_data: dict, template_id: int, orientation: str = 'portrait') -> bytes:
@@ -97,7 +103,7 @@ def generate_pdf(portfolio_data: dict, template_id: int, orientation: str = 'por
         html_content = template.render(**context)
         html_content = inject_orientation(html_content, orientation)
 
-        # ✅ PLAYWRIGHT PDF
+        # ✅ PDF generation (unchanged call)
         pdf_bytes = html_to_pdf(html_content)
 
     finally:

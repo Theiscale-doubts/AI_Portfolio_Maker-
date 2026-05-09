@@ -97,6 +97,7 @@ async def generate_pdf(portfolio_data: dict, template_id: int, orientation: str 
             template = env.get_template(f"template_{template_id}.html")
 
             context = copy.deepcopy(portfolio_data)
+<<<<<<< HEAD
             ai = context.get("ai_content") or {}
 
             context["summary"] = ai.get("summary", "") or context.get("bio", "")
@@ -121,6 +122,13 @@ async def generate_pdf(portfolio_data: dict, template_id: int, orientation: str 
                     context["ai_content"]["projects"] = merged
             else:
                 context["projects"] = original_projects
+=======
+            ai = context.get("ai_content", {})
+
+            context["summary"] = ai.get("summary", "")
+            context["tagline"] = ai.get("tagline", "")
+            context["projects"] = ai.get("projects", context.get("projects", []))
+>>>>>>> 2ec3945eefdcffb8449b915eb2ba5ff0f3bf9a09
 
             html_content = template.render(**context)
 

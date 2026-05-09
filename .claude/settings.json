@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\27241\\\\OneDrive\\\\Desktop\\\\AI_Portfolio_Maker--main\" -Recurse -Force | Select-Object FullName, @{Name=\"Type\"; Expression={if \\($_.PSIsContainer\\) {\"DIR\"} else {\"FILE\"}}} | Sort-Object FullName | Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\27241\\\\OneDrive\\\\Desktop\\\\AI_Portfolio_Maker--main\" -Recurse -File | ForEach-Object { $_.FullName } | Sort-Object)"
+    ]
+  }
+}

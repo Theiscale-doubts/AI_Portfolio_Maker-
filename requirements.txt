@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+groq
+jinja2
+pydantic
+json-repair
+playwright
